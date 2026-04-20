@@ -2,10 +2,237 @@
 <!--
   ============================================================
   員工考勤薪資系統
-  Version: V32
-  Build Date: 2026-04-19
+  Version: V52
+  Build Date: 2026-04-20
   ============================================================
   版本歷史:
+  V52 (2026-04-20)  修正表格模式 header 遮擋問題
+    - 問題:.table-layout 原本 position:fixed + top:64px,
+      但 header 實際高度(含 h1、eyebrow、padding、按鈕列 wrap)超過 64px,
+      導致內容被 header 壓住顯示不全
+    - 修正:table-layout 改為常規流(不 fixed),下方 tabs 改用 sticky
+    - 視覺效果:
+      * header 仍跟頁面一起捲動(和其他模式一致)
+      * 頁簽列黏在視窗底部不動(像 Excel)
+      * 表頭(thead)仍 sticky top:0,捲動時黏在頁面頂端
+    - 卡片模式不受影響
+
+  V51 (2026-04-20)  修正 paidCover 雙重扣減(V50 的小 bug)
+    - 問題:V50 新增「業務工時 ≤ 6hr → 8 − 工時」規則時,某些程式路徑
+      在 workHours 已經 += paidCover 後,又做了 rawShortfall -= paidCover
+      → 有請假的員工被少算稽核時數
+    - 徐沛淇 3/3 無請假(paidCover=0)不受影響 → 仍然 4.0hr
+    - 有請假且工時 ≤ 6hr 的員工 → 稽核會比 V50 正確高
+    - 修正 4 處一致:calcSalary、員工 sheet(Excel)、email、網頁表格模式
+
+  V50 (2026-04-20)  業務工時 ≤ 6hr 稽核改用「8 − 工時」
+    - 業務類型的稽核規則分層:
+      * 工時 > 7hr → 豁免
+      * 工時 > 6hr → 用遲到 + 早退(目標下班 18:30)
+      * 工時 ≤ 6hr → 稽核 = 8 − 實際工時(新)
+        * 從「早退時間」改為「缺勤時間」概念
+        * 不受遲到容忍的影響(員工工時太短直接反映在稽核)
+    - 非業務類型與楊梅週末規則不變
+    - 影響案例:
+      * 徐沛淇 3/3 業務 08:46-12:35 工時 3.82
+        原 V49:早退 6.92(19:30 − 12:35) → 取 7hr,扣 -875
+        V50:8 − 3.82 = 4.18 → 取 4hr,扣 -500
+      * 徐沛淇 3/17 業務 10:44-18:40 工時 6.93 → 工時 > 6,走舊規則 → 稽核 0 ✓
+    - 同步修正 4 處稽核計算:calcSalary、員工 sheet、email、網頁表格模式
+
+  V49 (2026-04-20)  稽核封頂由 4hr 改為 8hr
+    - 之前:稽核時數封頂 4hr(半天)
+    - 現在:稽核時數封頂 8hr(滿天)
+    - 案例:邱育瑩 3/20 業務 打卡 21:10-21:11(明顯異常)
+      * 遲到 10.42hr,封頂前後差異:4hr × 125 = -500 → 8hr × 125 = -1,000
+    - 影響:所有稽核時數 > 4hr 的日子,扣款翻倍
+
+  V48 (2026-04-20)  修正總表與 sheet 時數不一致 BUG
+    - 問題:邱育瑩 3/23 [事假] 10:30~18:30
+      sheet 逐日顯示 8hr 扣 -1,000,總表統計顯示事假扣款 -875
+    - 根因:請假時數用兩套不同邏輯
+      * calcSingleDayHours(用於 parseHours → 總表 leaveHours):扣午休 → 7hr
+      * calcLeaveHoursRange(用於 calcDayLeaveFromNote → sheet):不扣午休,上限 8 → 8hr
+    - 修正:parseHours 改用 calcLeaveHoursRange(與 sheet 同)
+    - 語意:請假時段是員工自行填寫的「缺席範圍」,不應扣午休
+      若員工打卡上班則繼續用 calcSingleDayHours(實際工時扣午休)
+    - 連帶影響所有有跨午休請假/加班補休段的員工:
+      * 10:30~18:30 請假原顯示 7hr → 正確改為 8hr(+125 扣款)
+      * 10:30~18:30 加班補休原顯示 7hr → 正確改為 8hr
+    - 驗算邱育瑩:
+      * 事假 8hr × 125 = -1,000 ✓
+      * 加班補休:2 + 1 + 8 + 3 + 2 = 16hr ✓
+      * (先前分別顯示 -875 與 15hr,均差 1 小時來自 10:30~18:30 扣午休的錯)
+
+  V47 (2026-04-20)  通知信格式精簡 + 主旨加公司抬頭
+    - 主旨加上「【小日子寫真館】」抬頭,降低被判為垃圾信的機率
+      例:【小日子寫真館】2026年3月 出勤明細 - 趙彥維
+    - 信件內文放棄固定寬度對齊(純文字 + 比例字體對齊必失敗)
+    - 改為三段式結構:
+      1. 員工名 / 工時類型 / 時段 / 制度
+      2. === 本月統計 ===(多行摘要,每行一組關鍵數字)
+         - 總天數、非六日天數
+         - 出勤、應出勤、漏打卡
+         - 加班、加班補休
+         - 事假扣款、傷病假扣款
+      3. === 需留意之日期 ===(只列出有事件的日子)
+         - 漏打卡日:含單卡時間 or 全缺標示
+         - 請假日:類型 + 時數 + 扣薪(若有)+ 時段
+         - 稽核日:稽核時數 + 扣薪 + 當日上下班打卡
+         - 依日期與事件類型混合排序
+    - 不列正常出勤日 → 大幅減少內文長度 → 不易被判為垃圾信
+    - 每行獨立 → 任何郵件軟體(Gmail, Apple Mail, Outlook)都清楚可讀
+
+  V46 (2026-04-20)  新增「表格模式」UI(Excel 樣式)
+    - header 加「卡片模式 / 表格模式」切換按鈕
+    - 表格模式三種頁籤內容:
+      1. 薪資總表(21 欄,所有時數 / 扣款欄可直接點擊編輯)
+      2. 月薪設定(月薪 / 應出勤 / Email 可編輯 + 通知連結)
+      3. 員工個人 sheet(逐日明細、合計列、週末灰底、稽核藍底)
+    - 頁簽列固定在底部(不隨網頁捲動,像 Excel)
+    - 頁簽順序:薪資總表 → 月薪設定 → 員工 × N(依匯入順序)
+    - 薪資總表可編輯的欄位:
+      漏打卡天數、各種假別時數、加班時數、加班補休、稽核時數、月薪、各種扣款
+    - 編輯值以 overrides 存在 state,不影響 calcSalary 與個人 sheet 計算
+      (注意:個人 sheet 會維持原值,總表可能因編輯而不一致,這是預期行為)
+    - 實發薪資欄自動重算:月薪 − 各項扣款
+    - 總表點員工姓名 → 切到該員工分頁
+    - 員工分頁格式與匯出 Excel 風格一致(深色表頭、黃底實發薪資)
+
+  V45 (2026-04-20)  通知信重組為完整 sheet 內容
+    - email 內文完整對應個人 sheet 所有欄位,只省略:月薪、時薪、實發薪資
+    - 格式:
+      1. 員工名 · 工時類型 · 時段 · 制度(與 sheet 第 1 行相同)
+      2. 期間:YYYY年M月
+      3. 本月總天數:N    非六日天數:N(與 sheet 第 3 行相同)
+      4. 出勤天數 | 應出勤 | 漏打卡 | 事假扣款 | 傷病假扣款 | 加班時數 | 加班補休
+         (與 sheet 第 4 行相同,金額含負號)
+      5. === 每日明細 === 逐日固定寬度表格(中英文字寬補齊對齊):
+         日期 | 週 | 上班 | 下班 | 請假 | 扣薪 | 稽核 | 稽核扣薪 | 備註
+      6. 合計列:合計:請假 Xhr | 扣薪 -X | 稽核 Xhr | 稽核扣薪 -X
+    - 金額欄(扣薪、稽核扣薪)會以負數千分位顯示
+    - 若某欄為 0,該欄留空(不顯示 0,與 sheet 相同)
+    - 移除 V43/V44 的「假別統計」「需留意之日期」「漏打卡清單」三段
+      (逐日表格已包含所有資訊)
+
+  V44 (2026-04-20)  通知信加入出勤統計行
+    - 信件在標頭下方加一行(與個人 sheet 第 4 行同步):
+      出勤天數:N | 應出勤:N天(...) | 漏打卡:N天 | 加班時數:N | 加班補休:N
+    - 週休制與排休制應出勤說明分別顯示:
+      * 排休制 → (本月N天-月休8天)
+      * 週休制 → (本月非六日天數)
+    - 不含事假扣款、傷病假扣款金額(維持 V39 不揭露薪資原則)
+
+  V43 (2026-04-20)  通知信格式統一
+    - 標頭簡化:「員工名 · 工時類型」(移除上下班時段)
+    - 結構三段:
+      1. === 假別統計 === 保留原格式,含漏打卡天數
+      2. === 需留意之日期(異常或請假) === 新整合區塊
+         * 請假日(含原備註,如:[事假] 2026-03-03 (二) 14:30 ~ 17:30)
+         * 稽核日(日期 · 上班 HH:MM · 下班 HH:MM · 稽核 Nhr)
+         * 加班/加班補休不算「需留意」(已在假別統計)
+         * 同一日若有多項,依日期排序混排
+      3. === 漏打卡 === 保留原格式,含單卡時間
+    - 結尾:「如有疑問請聯繫人資。」(移除「回覆此信」)
+
+  V42 (2026-04-20)  通知信:漏打卡統計與詳細時間
+    - 假別統計區加入「漏打卡:N 天」(取自 calcSalary,與總表一致)
+    - 漏打卡清單改為列出「有打到的那張卡的時間」:
+      * 兩張都沒打 → 「未打上下班卡」
+      * 只缺下班 → 「未打下班卡(上班 HH:MM)」列出實際上班時間
+      * 只缺上班 → 「未打上班卡(下班 HH:MM)」列出實際下班時間
+    - 方便員工辨識當天大致出勤狀況,確認是忘記打卡或真的缺勤
+
+  V41 (2026-04-20)  Email 通知內容大幅升級
+    - 移除 buildEmailBodyBrief,改用單一 buildEmailBody 給網頁與 Excel 共用
+    - 新的信件內容:
+      * 假別統計:事假、普通傷病假、特休、生理、公、婚、喪、加班、加班補休
+        只列出有時數的類別
+      * 漏打卡清單:列出每個漏打卡日的日期、星期、缺哪張卡
+      * 稽核日清單(重點):每個有稽核時數的日子都列出
+        - 日期 + 星期
+        - 當天實際的上班打卡時間
+        - 當天實際的下班打卡時間
+        - 稽核時數
+      * 若本月無漏卡無稽核 → 顯示「本月無漏打卡、無稽核時數」
+    - 依然不含薪資金額(月薪、時薪、扣款、實發皆不列)
+    - Excel 月薪設定 sheet:
+      * 通知欄的 mailto 超連結:嘗試放入完整 body
+      * URL 超過 2000 字元時自動退回「只含收件人 + 主旨」
+      * 第 6 欄「信件內容」顯示完整 body(Mac Excel 點 mailto 失敗時備援)
+
+  V40 (2026-04-20)  修正 Excel 寄送通知錯誤
+    - 問題:Mac Excel 點「寄送通知」超連結出現「發生意外的錯誤」
+    - 原因:ExcelJS 產生的 mailto URL 包含 encoded 換行、方括號等字元,
+            Excel(尤其 Mac 版)對這類 URL 解析不穩定
+    - 解決:月薪設定 sheet 的 mailto 超連結簡化為「只含收件人 + 主旨」
+      * URL 不含 body,避免特殊字元引發錯誤
+      * email 欄位本身不做 URL encode,直接用 email 字串
+    - 新增第 6 欄「信件內容(複製用)」
+      * 顯示 buildEmailBodyBrief 組好的文字內容(異常日清單)
+      * 使用者點超連結開啟郵件軟體後,可回來 Excel 複製此欄貼入信件
+      * 此方式雖然多一步,但保證通知功能 100% 可用
+
+  V39 (2026-04-19)  通知信移除薪資資訊、強化打卡明細
+    - 主旨從「出勤與薪資明細」改為「出勤明細」
+    - 網頁通知(完整版 buildEmailBody):
+      * 移除月薪、時薪、實發薪資、各項扣款金額
+      * 逐日表格:日期 | 週 | 上班(✓/✗) | 下班(✓/✗) | 請假時數 | 稽核時數 | 備註
+    - Excel mailto(精簡版 buildEmailBodyBrief):
+      * 移除薪資數字
+      * 只列「需留意的日期」:漏打卡、有請假、有稽核
+      * 無異常則顯示「本月出勤正常」
+    - 員工不會看到自己的薪資數字,只會看到打卡事實,避免敏感資訊外流
+      (實際薪資數字保留在匯出 Excel 的薪資總表,由人資掌控)
+
+  V38 (2026-04-19)  修正 Excel 檔案損毀問題(mailto URL 過長)
+    - V37 的 mailto 含逐日明細 → URL 超過 Excel 2083 字元上限 → 檔案開不了
+    - 改用 buildEmailBodyBrief:Excel 內 mailto 只放薪資摘要
+    - 加入長度保護:若 URL > 2000 字,退回只放主旨
+    - 逐日明細提示使用者看 Excel 個人分頁(本來就在同一份檔案)
+    - 系統內的「✉ 通知此員工」與「✉ 統一通知」按鈕仍使用完整版
+      (因為瀏覽器 mailto 允許較長 URL)
+
+  V37 (2026-04-19)  月薪設定 sheet 加入 mailto 通知連結
+    - 「月薪設定」sheet 新增第 5 欄「通知」
+    - 有 email 的員工顯示「✉ 寄送通知」藍色超連結
+    - 點擊後直接開啟 Excel 使用者預設的郵件軟體
+      * 自動填好收件人、主旨(期間+姓名)、內文(薪資摘要+逐日明細)
+    - 沒 email 的員工顯示「—」
+    - 注意:mailto URL 長度受郵件軟體限制,若員工打卡日數多可能會被截斷
+
+  V36 (2026-04-19)  月薪設定 sheet 位置調整
+    - sheet 順序:薪資總表 → 月薪設定 → 員工個別 sheet × N
+    - 原本月薪設定在所有員工 sheet 之後,現提前到總表緊鄰位置
+    - 便於人資核對薪資時在最前兩頁即可同時檢視總覽與設定
+
+  V35 (2026-04-19)  匯出 Excel 加入「月薪設定」sheet
+    - 匯出的報表新增第 2 個 sheet「月薪設定」
+    - 內容:員工姓名 / 月薪 / 應出勤天數 / Email(4 欄)
+    - 有匯入月薪 → 按匯入順序,以匯入值為準
+    - 沒匯入 → 顯示系統預設值(月薪、應出勤、email 空),員工按姓名筆劃排序
+    - 預設欄位用淡灰斜體顯示,區分「實際設定」與「套用預設」
+    - Email 空值顯示「—」
+
+  V34 (2026-04-19)  Email 通知功能 + 取消漏卡扣薪欄
+    - 取消 V33 新增的「漏卡扣薪」欄(回到 9 欄結構)
+    - 月薪範本新增 Email 欄,匯入時讀取並儲存到 emp.email
+    - Email 通知功能:
+      * 個人詳情區:顯示該員工 email,按「✉ 通知此員工」開啟預設郵件軟體
+      * header 新增「✉ 統一通知」按鈕:依匯入順序為每位有 email 的員工
+        依序開啟郵件撰寫視窗(間隔 800ms 避免被瀏覽器擋)
+      * 信件主旨:[期間] 出勤與薪資明細 - [姓名]
+      * 信件內文:基本薪資資訊 + 逐日打卡明細(文字表格)
+      * email 空值自動跳過不通知
+    - 技術限制:瀏覽器無法自動寄信,必須在使用者的郵件軟體中按發送
+
+  V33 (2026-04-19)  員工 sheet 新增「漏卡扣薪」欄(已取消)
+    - 每個漏打卡日顯示當日扣薪(= 8 × 時薪 = 1 日薪)
+    - 表頭紅字、數值紅字粗體、格式千分位
+    - 合計列加入 SUM(J) 公式,與其他合計欄同步
+    - 週末底色、藍底(稽核)範圍延伸至第 10 欄
+    - 非漏打卡日該欄留白
+
   V32 (2026-04-19)  生理假改為半扣(與普通傷病假相同)
     - 生理假時數改為時薪 × 時數 × 0.5 扣薪
     - sheet 逐日的「扣薪」欄、總表「傷病假扣款」欄,皆合併計算生理假
@@ -262,8 +489,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>員工考勤薪資系統 V32</title>
-<meta name="version" content="V32">
+<title>員工考勤薪資系統 V52</title>
+<meta name="version" content="V52">
 <meta name="build-date" content="2026-04-19">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -555,13 +782,152 @@
 
   /* icons */
   .icon { width: 14px; height: 14px; display: inline-block; vertical-align: middle; }
+
+  /* ========== 表格模式(Excel 樣式)========== */
+  /* 採常規流(不 fixed),避開 header 高度寫死導致內容被覆蓋的問題
+     tabs 改用 sticky 固定在視窗底部 */
+  .table-layout {
+    background: #fafaf7;
+    min-height: calc(100vh - 200px);   /* 空間足夠但不需 fixed */
+    display: flex;
+    flex-direction: column;
+  }
+  .table-layout.hidden { display: none !important; }
+
+  .tbl-scroll {
+    flex: 1 1 auto;
+    padding: 16px 20px 60px 20px;   /* 底部留空避免被 sticky tabs 蓋到 */
+  }
+
+  .tbl-title {
+    font-family: 'Noto Serif TC', serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #1a1a1a;
+  }
+  .tbl-summary-meta {
+    color: #d43f3a;
+    font-size: 11px;
+    margin-bottom: 12px;
+  }
+
+  .xls-table {
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', 'Noto Sans TC', monospace;
+    font-size: 12px;
+    background: #fff;
+  }
+  .xls-table th, .xls-table td {
+    border: 1px solid #d9d9d9;
+    padding: 4px 8px;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .xls-table thead th {
+    background: #1a1a1a;
+    color: #fff;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .xls-table tbody td.editable {
+    cursor: text;
+    position: relative;
+  }
+  .xls-table tbody td.editable:hover {
+    background: #fff8d6;
+    outline: 1px solid #c9a961;
+  }
+  .xls-table tbody td.editable:focus {
+    outline: 2px solid #1E5FBF;
+    background: #e8f0fe;
+    z-index: 1;
+  }
+  .xls-table tbody tr.audit-row td { background: #d6eaf8; }
+  .xls-table tbody td.num { text-align: right; }
+  .xls-table tbody td.link {
+    color: #1E5FBF;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .xls-table tbody td.neg { color: #d43f3a; }
+
+  /* 頁籤列(Excel 樣式,sticky 固定在視窗底部)*/
+  .tbl-tabs {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    overflow-x: auto;
+    background: #ececec;
+    border-top: 1px solid #bbb;
+    padding: 0 8px;
+    gap: 2px;
+    min-height: 32px;
+    align-items: stretch;
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.08);
+  }
+  .tbl-tab {
+    padding: 6px 14px;
+    font-family: 'Noto Sans TC', sans-serif;
+    font-size: 12px;
+    cursor: pointer;
+    background: #dcdcd5;
+    border: 1px solid #bbb;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    color: #555;
+    white-space: nowrap;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    transition: background 0.1s;
+  }
+  .tbl-tab:hover { background: #e8e8e0; }
+  .tbl-tab.active {
+    background: #fff;
+    color: #1a1a1a;
+    font-weight: 700;
+    border-bottom: 1px solid #fff;
+    position: relative;
+    top: 1px;
+  }
+  .tbl-tab.summary-tab { background: #fff3d0; }
+  .tbl-tab.summary-tab.active { background: #ffecb3; }
+
+  /* View Mode Toggle */
+  .view-toggle {
+    display: inline-flex;
+    background: #2a2a2a;
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .view-toggle button {
+    background: transparent;
+    color: #ccc;
+    border: none;
+    padding: 4px 10px;
+    font-family: 'Noto Sans TC', sans-serif;
+    font-size: 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .view-toggle button.active {
+    background: #c9a961;
+    color: #1a1a1a;
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
 
 <header>
   <div class="title-group">
-    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V32</span></div>
+    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V52</span></div>
     <h1 class="serif">員工考勤薪資系統</h1>
   </div>
   <div class="actions" id="headerActions">
@@ -614,11 +980,17 @@
   <main class="detail" id="detailPanel"></main>
 </div>
 
+<!-- Table Mode Layout (Excel-style) -->
+<div id="tableLayout" class="table-layout hidden">
+  <div class="tbl-scroll" id="tableScroll"></div>
+  <div class="tbl-tabs" id="tableTabs"></div>
+</div>
+
 <input type="file" id="salaryFileInput" accept=".xlsx,.xls" style="display:none">
 
 <script>
 // =============== 版本資訊 ===============
-const APP_VERSION = 'V32';
+const APP_VERSION = 'V52';
 const APP_BUILD_DATE = '2026-04-19';
 
 // =============== State ===============
@@ -632,6 +1004,9 @@ const state = {
   defaultWorkDays: 22,
   recordSort: 'asc', // 'asc' = 日期升冪(預設), 'desc' = 降冪
   salaryImportOrder: [], // 月薪匯入時的員工順序(影響薪資匯出的排序)
+  viewMode: 'cards', // 'cards' = 現有卡片模式、'table' = Excel 式表格模式
+  activeTab: 'summary', // 表格模式下的當前頁籤:'summary' | 'salary' | 員工名
+  overrides: {}, // 表格模式下使用者的編輯覆蓋值(key: "員工名|欄位名") → 新值
 };
 
 // =============== SVG icons ===============
@@ -936,11 +1311,10 @@ function parseHours(text, rule, punchedDates, monthRange) {
   const aDateStr = a.dateStr || '2000-01-01';
   const bDateStr = b.dateStr || aDateStr;
 
-  // 單日:直接算時間差
+  // 單日:直接算時間差(請假/加班補休時段不扣午休,與 calcDayLeaveFromNote 一致)
   if (aDateStr === bDateStr) {
-    // 若有月範圍且該日期不在範圍內,不計
     if (monthRange && (aDateStr < monthRange.minDate || aDateStr > monthRange.maxDate)) return 0;
-    return calcSingleDayHours(a.h, a.m, b.h, b.m);
+    return calcLeaveHoursRange(a.h, a.m, b.h, b.m);
   }
 
   // 跨日:逐日累加工作日
@@ -952,17 +1326,16 @@ function parseHours(text, rule, punchedDates, monthRange) {
   const cursor = new Date(startDate);
   while (cursor <= endDate) {
     const cursorStr = formatDateKey(cursor);
-    // 月範圍過濾:跨月請假時排除本月以外的日期(避免 3/31~4/1 把 3/31 也算進 4 月)
     const inMonth = !monthRange || (cursorStr >= monthRange.minDate && cursorStr <= monthRange.maxDate);
     if (inMonth && isWorkingDay(cursor, rule, punchedDates)) {
       const isFirst = cursor.getTime() === startDate.getTime();
       const isLast = cursor.getTime() === endDate.getTime();
       if (isFirst) {
-        total += calcSingleDayHours(a.h, a.m, rule.endH, rule.endM);
+        total += calcLeaveHoursRange(a.h, a.m, rule.endH, rule.endM);
       } else if (isLast) {
-        total += calcSingleDayHours(rule.startH, rule.startM, b.h, b.m);
+        total += calcLeaveHoursRange(rule.startH, rule.startM, b.h, b.m);
       } else {
-        total += calcSingleDayHours(rule.startH, rule.startM, rule.endH, rule.endM);
+        total += calcLeaveHoursRange(rule.startH, rule.startM, rule.endH, rule.endM);
       }
     }
     cursor.setDate(cursor.getDate() + 1);
@@ -1119,7 +1492,12 @@ function calcSalary(name) {
         }
       } else if (workHours > 7) {
         rawShortfall = 0;
+      } else if (isSalesRole && workHours <= 6) {
+        // 業務且工時 ≤ 6hr → 直接用 8 − 工時
+        // 注意:workHours 已包含 paidCover,所以 8-workHours 就是實際不足
+        rawShortfall = Math.max(0, 8 - workHours);
       } else {
+        // 業務工時 > 6(目標 18:30)或非業務 → 用遲到+早退
         const outTarget = (isSalesRole && workHours > 6) ? (stdOut - 1) : stdOut;
         const late = Math.max(0, rawIn - (stdIn + 0.25));
         const earlyOut = Math.max(0, outTarget - rawOut);
@@ -1127,7 +1505,7 @@ function calcSalary(name) {
         rawShortfall = Math.max(0, rawShortfall - paidCover);
       }
     }
-    rawShortfall = Math.min(rawShortfall, 4);
+    rawShortfall = Math.min(rawShortfall, 8);
 
     const shortfall = Math.round(rawShortfall * 2) / 2;
     if (shortfall >= 0.5) {
@@ -1153,15 +1531,233 @@ function calcSalary(name) {
   };
 }
 
+// =============== Email 通知 ===============
+// V47 通知信格式:簡潔、每行獨立、只列異常日(避免郵件軟體非等寬字體顯示錯亂)
+// 格式:
+//   標頭 · 工時類型 · 時段 · 制度
+//   期間
+//
+//   === 本月統計 ===
+//   本月總天數 / 非六日天數
+//   出勤 / 應出勤 / 漏打卡
+//   加班 / 加班補休
+//   事假扣款 / 傷病假扣款
+//
+//   === 需留意之日期 ===
+//   只列出「有異常的日子」:請假、稽核、漏打卡
+//   每一日一行,含:日期、週、事件、當日打卡時間(如適用)
+//
+//   如有疑問請聯繫人資。
+function buildEmailBody(name) {
+  const emp = state.employees[name];
+  if (!emp) return '';
+  const rule = emp.stats.rule;
+  const sal = calcSalary(name);
+  const weekdayZh = ['日','一','二','三','四','五','六'];
+
+  const startTime = `${String(rule.startH).padStart(2,'0')}:${String(rule.startM).padStart(2,'0')}`;
+  const endTime = `${String(rule.endH).padStart(2,'0')}:${String(rule.endM).padStart(2,'0')}`;
+
+  const lines = [];
+  lines.push(`${emp.name} · ${emp.workType || '—'} · ${startTime}–${endTime} · ${rule.isShift ? '排休制' : '週休制'}`);
+  lines.push(`期間:${state.period}`);
+  lines.push('');
+
+  // === 本月統計 ===
+  lines.push('=== 本月統計 ===');
+  lines.push(`本月總天數:${sal.monthTotalDays} | 非六日天數:${sal.monthWeekdays}`);
+  const expectDesc = sal.isShift
+    ? `應出勤:${sal.expectedWorkDays}天(本月${sal.monthTotalDays}天-月休8天)`
+    : `應出勤:${sal.expectedWorkDays}天`;
+  lines.push(`出勤天數:${emp.stats.punchedDays} | ${expectDesc} | 漏打卡:${sal.missedDays}天`);
+  lines.push(`加班:${sal.otHours}hr | 加班補休:${sal.otCompHours}hr`);
+  lines.push(`事假扣款:${sal.personalDeduct ? '-' + sal.personalDeduct.toLocaleString() : '0'} | 傷病假扣款:${sal.sickDeduct ? '-' + sal.sickDeduct.toLocaleString() : '0'}`);
+  lines.push('');
+
+  // === 準備資料 ===
+  const allDates = new Set();
+  for (const r of emp.records) if (r.date) allDates.add(r.date);
+  const sortedDates = [...allDates].sort();
+  const recordMap = {};
+  for (const r of emp.records) if (r.date) recordMap[r.date] = r;
+
+  const isSalesRole = (emp.workType || '').includes('業務');
+  const isYangMei = (emp.workType || '').includes('楊梅-週一至週五')
+                 || (emp.workType || '').includes('楊梅-排休');
+
+  const hourlyWage = sal.hourlyWage;
+
+  // 一日一項 (sortKey + text)
+  const attention = [];
+
+  for (const dateStr of sortedDates) {
+    const r = recordMap[dateStr];
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const wLabel = weekdayZh[dow];
+    const isWeekend = (dow === 0 || dow === 6);
+
+    const hasIn = !!(r && r.punchIn);
+    const hasOut = !!(r && r.punchOut);
+    const hasNote = !!(r && r.note && r.note.trim());
+    const noteText = hasNote ? r.note.trim() : '';
+
+    // 漏打卡
+    if ((!hasIn || !hasOut) && !hasNote) {
+      if (rule.isShift || !isWeekend) {
+        let tag = '';
+        if (!hasIn && !hasOut) tag = '漏打卡(上下班卡皆未打)';
+        else if (hasIn && !hasOut) tag = `漏打卡(未打下班卡,上班 ${r.punchIn})`;
+        else tag = `漏打卡(未打上班卡,下班 ${r.punchOut})`;
+        attention.push({ key: dateStr + '-0', text: `${dateStr} (${wLabel}) ${tag}` });
+      }
+    }
+
+    // 請假日(有備註、非加班類型)
+    if (hasNote) {
+      const mm = noteText.match(/^\[([^\]]+)\](.+)$/);
+      if (mm) {
+        const type = mm[1];
+        if (!['加班', '加班補休'].includes(type)) {
+          // 計算當日請假時數與扣薪
+          const parsed = calcDayLeaveFromNote(r, rule);
+          let segInfo = '';
+          if (parsed && parsed.hours > 0) {
+            let ded = 0;
+            if (type === '事假') ded = Math.round(parsed.hours * hourlyWage);
+            else if (type === '普通傷病假' || type === '生理假') ded = Math.round(parsed.hours * hourlyWage * 0.5);
+            // 嘗試從 desc 取時段(例如 14:30 ~ 17:30)
+            const timeMatch = mm[2].match(/(\d{1,2}:\d{2})\s*~\s*(\d{1,2}:\d{2})/);
+            const timeStr = timeMatch ? `(${timeMatch[1]}~${timeMatch[2]})` : '';
+            segInfo = `${type} ${parsed.hours}hr${ded > 0 ? ` · 扣 -${ded.toLocaleString()}` : ''} ${timeStr}`.trim();
+          } else {
+            segInfo = type;
+          }
+          attention.push({ key: dateStr + '-1', text: `${dateStr} (${wLabel}) ${segInfo}` });
+        }
+      }
+    }
+
+    // 稽核
+    if (hasIn && hasOut) {
+      const [ih, im] = r.punchIn.split(':').map(Number);
+      const [oh, om] = r.punchOut.split(':').map(Number);
+      const rawIn = ih + im / 60;
+      const rawOut = oh + om / 60;
+      let workHours = Math.max(0, rawOut - rawIn);
+      if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+      const segments = parseAllLeavesFromNote(r, rule);
+      const paidCover = segments.filter(s => s.type !== '加班').reduce((sum, s) => sum + s.hours, 0);
+      workHours += paidCover;
+
+      let shortfall = 0;
+      if (isYangMei && isWeekend) {
+        if (workHours <= 5) shortfall = Math.max(0, 8 - workHours);
+      } else if (workHours > 7) {
+        shortfall = 0;
+      } else if (isSalesRole && workHours <= 6) {
+        // 業務且工時 ≤ 6hr → 8 − 工時(workHours 已含 paidCover)
+        shortfall = Math.max(0, 8 - workHours);
+      } else {
+        const stdIn = rule.startH + rule.startM / 60;
+        const stdOut = rule.endH + rule.endM / 60;
+        const outTarget = (isSalesRole && workHours > 6) ? (stdOut - 1) : stdOut;
+        const late = Math.max(0, rawIn - (stdIn + 0.25));
+        const earlyOut = Math.max(0, outTarget - rawOut);
+        shortfall = Math.max(0, late + earlyOut - paidCover);
+      }
+      shortfall = Math.min(shortfall, 8);
+      shortfall = Math.round(shortfall * 2) / 2;
+      if (shortfall >= 0.5) {
+        const ded = Math.round(shortfall * hourlyWage);
+        attention.push({ key: dateStr + '-2',
+          text: `${dateStr} (${wLabel}) 稽核 ${shortfall}hr · 扣 -${ded.toLocaleString()}(上班 ${r.punchIn} · 下班 ${r.punchOut})` });
+      }
+    }
+  }
+
+  // === 需留意之日期 ===
+  attention.sort((a, b) => a.key < b.key ? -1 : 1);
+  lines.push('=== 需留意之日期 ===');
+  if (attention.length === 0) {
+    lines.push('本月無異常');
+  } else {
+    for (const item of attention) lines.push(item.text);
+  }
+  lines.push('');
+  lines.push('如有疑問請聯繫人資。');
+
+  return lines.join('\n');
+}
+
+// 針對單一員工開啟 mailto 郵件撰寫(網頁使用)
+function notifyEmployee(name) {
+  const emp = state.employees[name];
+  if (!emp) return;
+  const email = (emp.email || '').trim();
+  if (!email) {
+    showToast(`✗ ${name} 沒有 email,無法通知`, 'error');
+    return;
+  }
+  const subject = `【小日子寫真館】${state.period || ''} 出勤明細 - ${name}`;
+  const body = buildEmailBody(name);
+  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = mailto;
+}
+
+
+// 統一通知所有有 email 的員工(依序開啟 mailto)
+async function notifyAllEmployees() {
+  const withEmail = [];
+  const noEmail = [];
+  // 以 salaryImportOrder 或所有員工
+  const order = state.salaryImportOrder && state.salaryImportOrder.length
+    ? state.salaryImportOrder
+    : Object.keys(state.employees).sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+  for (const name of order) {
+    const emp = state.employees[name];
+    if (!emp) continue;
+    if ((emp.email || '').trim()) withEmail.push(name);
+    else noEmail.push(name);
+  }
+  if (!withEmail.length) {
+    showToast('✗ 沒有任何員工有 email', 'error');
+    return;
+  }
+  const confirmMsg = `即將為 ${withEmail.length} 位員工開啟郵件撰寫視窗:\n${withEmail.join('、')}\n\n` +
+    (noEmail.length ? `(跳過 ${noEmail.length} 位沒 email 的員工:${noEmail.join('、')})\n\n` : '') +
+    `你的瀏覽器會一次開啟多個郵件視窗,是否繼續?`;
+  if (!confirm(confirmMsg)) return;
+
+  // 依序觸發,間隔 800ms 避免瀏覽器擋 pop-up
+  for (let i = 0; i < withEmail.length; i++) {
+    const name = withEmail[i];
+    const emp = state.employees[name];
+    const subject = `【小日子寫真館】${state.period || ''} 出勤明細 - ${name}`;
+    const body = buildEmailBody(name);
+    const mailto = `mailto:${encodeURIComponent(emp.email.trim())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    // 用新視窗觸發,避免 location.href 覆蓋前一個
+    const w = window.open(mailto, '_blank');
+    if (w) setTimeout(() => { try { w.close(); } catch(e){} }, 1500);
+    await new Promise(res => setTimeout(res, 800));
+  }
+  showToast(`✓ 已觸發 ${withEmail.length} 封通知信`, 'success');
+}
+
 // =============== Actions ===============
 function downloadTemplate() {
-  const rows = [['員工姓名', '月薪(TWD)', '應出勤天數(可選填)']];
+  const rows = [['員工姓名', '月薪(TWD)', '應出勤天數(可選填)', 'Email(可選填)']];
   const names = Object.keys(state.employees).sort((a,b) => a.localeCompare(b, 'zh-Hant'));
   for (const n of names) {
-    rows.push([n, state.employees[n].salary ?? '', state.employees[n].workDays ?? '']);
+    rows.push([
+      n,
+      state.employees[n].salary ?? '',
+      state.employees[n].workDays ?? '',
+      state.employees[n].email ?? '',
+    ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:14},{wch:14},{wch:20}];
+  ws['!cols'] = [{wch:14},{wch:14},{wch:20},{wch:26}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '員工月薪設定');
   XLSX.writeFile(wb, `員工月薪範本_${state.period || ''}.xlsx`);
@@ -1182,6 +1778,7 @@ async function importSalary(file) {
     const nameIdx = header.findIndex(h => h.includes('員工姓名'));
     const salaryIdx = header.findIndex(h => h.includes('月薪') || h.includes('薪資'));
     const daysIdx = header.findIndex(h => h.includes('出勤天數') || h.includes('應出勤'));
+    const emailIdx = header.findIndex(h => /email/i.test(h) || h.includes('信箱') || h.includes('郵件'));
     if (nameIdx === -1 || salaryIdx === -1) throw new Error('必須有"員工姓名"與"月薪"欄位');
 
     let updated = 0, skipped = 0;
@@ -1200,6 +1797,10 @@ async function importSalary(file) {
       if (daysIdx !== -1 && r[daysIdx] !== null && r[daysIdx] !== undefined && r[daysIdx] !== '') {
         const d = Number(r[daysIdx]);
         if (!isNaN(d)) state.employees[name].workDays = d;
+      }
+      if (emailIdx !== -1 && r[emailIdx] !== null && r[emailIdx] !== undefined) {
+        const em = String(r[emailIdx]).trim();
+        state.employees[name].email = em || '';
       }
       if (!importOrder.includes(name)) importOrder.push(name);
       updated++;
@@ -1502,6 +2103,110 @@ async function exportReport() {
     summary.getColumn(colIdx).numFmt = '#,##0';
   });
 
+  // ========== 月薪設定 sheet ==========
+  // 位置:薪資總表 → 月薪設定 → 各員工 sheet
+  // 內容 = 匯入的月薪資料(若有),或所有員工的當前設定(若沒匯入)
+  const salarySheet = wb.addWorksheet('月薪設定');
+  const hasImported = importOrder.length > 0;
+
+  salarySheet.mergeCells('A1:D1');
+  const title1 = salarySheet.getCell('A1');
+  title1.value = hasImported
+    ? `月薪設定(已匯入 ${importOrder.length} 位) · ${state.period}`
+    : `月薪設定(使用預設) · ${state.period}`;
+  title1.font = { bold: true, size: 14 };
+  title1.alignment = { vertical: 'middle', horizontal: 'left' };
+  salarySheet.getRow(1).height = 24;
+
+  salarySheet.mergeCells('A2:D2');
+  const desc2 = salarySheet.getCell('A2');
+  desc2.value = hasImported
+    ? '此分頁紀錄本次匯出時的月薪匯入資料,薪資順序依此而來。'
+    : `此分頁為系統預設(月薪 ${state.defaultSalary.toLocaleString()} / 應出勤 ${state.defaultWorkDays} 天),員工依姓名筆劃排序。未匯入時此欄為空。`;
+  desc2.font = { size: 11, color: { argb: 'FFD43F3A' } };
+  desc2.alignment = { vertical: 'middle', wrapText: true };
+  salarySheet.getRow(2).height = 22;
+
+  const salaryHeaders = ['員工姓名', '月薪(TWD)', '應出勤天數', 'Email', '通知', '信件內容(複製用)'];
+  const salaryHeaderR = salarySheet.getRow(3);
+  salaryHeaders.forEach((h, i) => {
+    const c = salaryHeaderR.getCell(i + 1);
+    c.value = h;
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A1A1A' } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  salaryHeaderR.height = 22;
+
+  let sRow = 4;
+  for (const n of names) {
+    const emp = state.employees[n];
+    if (!emp) continue;
+    const row = salarySheet.getRow(sRow);
+    row.getCell(1).value = emp.name;
+    row.getCell(2).value = emp.salary ?? (hasImported ? '' : state.defaultSalary);
+    row.getCell(3).value = emp.workDays ?? (hasImported ? '' : state.defaultWorkDays);
+    row.getCell(4).value = emp.email || '';
+
+    row.getCell(2).numFmt = '#,##0';
+    row.getCell(2).alignment = { horizontal: 'right' };
+    row.getCell(3).alignment = { horizontal: 'right' };
+
+    if (emp.salary === undefined) {
+      row.getCell(2).font = { color: { argb: 'FF999999' }, italic: true };
+    }
+    if (emp.workDays === undefined) {
+      row.getCell(3).font = { color: { argb: 'FF999999' }, italic: true };
+    }
+    if (!emp.email) {
+      row.getCell(4).font = { color: { argb: 'FF999999' }, italic: true };
+      row.getCell(4).value = '—';
+    }
+
+    // 第 5 欄:通知按鈕(mailto 超連結,含 body)
+    const notifyCell = row.getCell(5);
+    if (emp.email) {
+      const subject = `【小日子寫真館】${state.period || ''} 出勤明細 - ${emp.name}`;
+      const body = buildEmailBody(emp.name);
+      let mailtoUrl = `mailto:${emp.email.trim()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      // 安全上限:Excel hyperlink 上限約 2083 字元
+      // 超過則退回「只含收件人 + 主旨」,員工從第 6 欄手動複製 body
+      if (mailtoUrl.length > 2000) {
+        mailtoUrl = `mailto:${emp.email.trim()}?subject=${encodeURIComponent(subject)}`;
+      }
+      notifyCell.value = {
+        text: '✉ 寄送通知',
+        hyperlink: mailtoUrl,
+        tooltip: `寄 email 給 ${emp.email}`,
+      };
+      notifyCell.font = { color: { argb: 'FF1E5FBF' }, underline: true, bold: true };
+    } else {
+      notifyCell.value = '—';
+      notifyCell.font = { color: { argb: 'FFCCCCCC' }, italic: true };
+    }
+    notifyCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // 第 6 欄:信件內容(備援:超連結失敗時可手動複製)
+    const bodyCell = row.getCell(6);
+    if (emp.email) {
+      bodyCell.value = buildEmailBody(emp.name);
+      bodyCell.font = { size: 9, color: { argb: 'FF555555' } };
+      bodyCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+    } else {
+      bodyCell.value = '';
+    }
+
+    sRow++;
+  }
+
+  salarySheet.getColumn(1).width = 14;
+  salarySheet.getColumn(2).width = 14;
+  salarySheet.getColumn(3).width = 14;
+  salarySheet.getColumn(4).width = 28;
+  salarySheet.getColumn(5).width = 14;  // 通知
+  salarySheet.getColumn(6).width = 60;  // 信件內容
+  salarySheet.views = [{ state: 'frozen', ySplit: 3 }];
+
   // ========== 每位員工獨立 sheet ==========
   const weekdayZh = ['日','一','二','三','四','五','六'];
 
@@ -1768,13 +2473,13 @@ async function exportReport() {
           // 通用:
           //   - 實際工時 > 7hr → 豁免稽核
           //   - 遲到容忍 15 分、下班不容忍
-          //   - 稽核 = 遲到 + 早退(封頂 4hr、四捨五入 0.5、< 0.5 不計)
+          //   - 稽核 = 遲到 + 早退(封頂 8hr、四捨五入 0.5、< 0.5 不計)
           // 業務類型:
           //   - 工時 > 6hr → 目標下班 = 標準 − 1hr(18:30)
           //   - 工時 ≤ 6hr → 目標下班 = 標準(19:30)
           // 楊梅週末(楊梅-週一至週五 / 楊梅-排休,且週六/日):
           //   - 工時 > 5hr → 視為滿 8hr,豁免
-          //   - 工時 ≤ 5hr → 稽核 = 8 − 工時(封頂 4hr)
+          //   - 工時 ≤ 5hr → 稽核 = 8 − 工時(封頂 8hr)
           const isSalesRole = (emp.workType || '').includes('業務');
           const stdIn = rule.startH + rule.startM / 60;
           const stdOut = rule.endH + rule.endM / 60;
@@ -1805,8 +2510,11 @@ async function exportReport() {
           } else if (workHours > 7) {
             // 通用豁免:工時 > 7hr
             rawShortfall = 0;
+          } else if (isSalesRole && workHours <= 6) {
+            // 業務且工時 ≤ 6hr → 8 − 工時(workHours 已含 paidCover)
+            rawShortfall = Math.max(0, 8 - workHours);
           } else {
-            // 稽核目標下班時間
+            // 業務工時 > 6(目標 18:30)或非業務 → 用遲到+早退
             const outTarget = (isSalesRole && workHours > 6) ? (stdOut - 1) : stdOut;
             // 遲到容忍 15 分、早退不容忍
             const late = Math.max(0, rawIn - (stdIn + 0.25));
@@ -1815,7 +2523,7 @@ async function exportReport() {
             rawShortfall = Math.max(0, rawShortfall - paidCover);
           }
 
-          rawShortfall = Math.min(rawShortfall, 4);
+          rawShortfall = Math.min(rawShortfall, 8);
           const shortfall = Math.round(rawShortfall * 2) / 2;
           if (shortfall >= 0.5) {
             const auditDed = Math.round(shortfall * hourlyWage);
@@ -1941,11 +2649,18 @@ function updateWorkDays(name, val) {
 function render() {
   const hasData = state.rawData !== null;
   document.getElementById('uploadScreen').classList.toggle('hidden', hasData);
-  document.getElementById('mainLayout').classList.toggle('hidden', !hasData);
+  const cardsMode = state.viewMode === 'cards';
+  document.getElementById('mainLayout').classList.toggle('hidden', !hasData || !cardsMode);
+  document.getElementById('tableLayout').classList.toggle('hidden', !hasData || cardsMode);
 
   const actions = document.getElementById('headerActions');
   if (hasData) {
     actions.innerHTML = `
+      <div class="view-toggle">
+        <button class="${cardsMode ? 'active' : ''}" onclick="setViewMode('cards')">卡片模式</button>
+        <button class="${!cardsMode ? 'active' : ''}" onclick="setViewMode('table')">表格模式</button>
+      </div>
+      <div class="divider"></div>
       <div class="period-box">
         <div class="lbl">Period</div>
         <div class="val">${esc(state.period)}</div>
@@ -1953,6 +2668,7 @@ function render() {
       <div class="divider"></div>
       <button class="btn btn-gold" onclick="downloadTemplate()">${ICONS.download} 月薪範本</button>
       <button class="btn btn-gold" onclick="document.getElementById('salaryFileInput').click()">${ICONS.sheet} 匯入月薪</button>
+      <button class="btn btn-gold" onclick="notifyAllEmployees()" title="為每位有 Email 的員工開啟郵件撰寫視窗">✉ 統一通知</button>
       <div class="divider"></div>
       <button class="btn btn-outline" onclick="reset()">重新上傳</button>
       <button class="btn btn-primary" onclick="exportReport()">${ICONS.download} 匯出報表</button>
@@ -1963,6 +2679,21 @@ function render() {
 
   if (!hasData) return;
 
+  if (cardsMode) {
+    renderCardsMode();
+  } else {
+    renderTableMode();
+  }
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode;
+  // 第一次進表格模式時,若還沒設定 activeTab 的員工名,預設為 summary
+  if (mode === 'table' && !state.activeTab) state.activeTab = 'summary';
+  render();
+}
+
+function renderCardsMode() {
   const empList = Object.values(state.employees).sort((a,b) => a.name.localeCompare(b.name, 'zh-Hant'));
   document.getElementById('empCount').textContent = `· ${empList.length}`;
 
@@ -2001,6 +2732,372 @@ function selectEmp(name) {
 function backToOverview() {
   state.selectedEmp = null;
   render();
+}
+
+// ========== 表格模式(Excel 樣式)==========
+function renderTableMode() {
+  // 取得員工排序(與匯出順序同)
+  const importOrder = state.salaryImportOrder || [];
+  const allNames = Object.keys(state.employees);
+  const inImport = importOrder.filter(n => state.employees[n]);
+  const rest = allNames.filter(n => !importOrder.includes(n))
+    .sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  const names = [...inImport, ...rest];
+
+  // 如果 activeTab 是某個員工但那員工已不存在 → 退回 summary
+  if (state.activeTab !== 'summary' && state.activeTab !== 'salary' && !state.employees[state.activeTab]) {
+    state.activeTab = 'summary';
+  }
+
+  // === 上方內容 ===
+  const scroll = document.getElementById('tableScroll');
+  if (state.activeTab === 'summary') {
+    scroll.innerHTML = renderSummaryTable(names);
+  } else if (state.activeTab === 'salary') {
+    scroll.innerHTML = renderSalarySettingsTable(names);
+  } else {
+    scroll.innerHTML = renderEmployeeSheetTable(state.activeTab);
+  }
+
+  // === 下方頁籤列 ===
+  const tabsHtml = [];
+  tabsHtml.push(`<div class="tbl-tab summary-tab ${state.activeTab === 'summary' ? 'active' : ''}" onclick="setActiveTab('summary')">薪資總表</div>`);
+  tabsHtml.push(`<div class="tbl-tab summary-tab ${state.activeTab === 'salary' ? 'active' : ''}" onclick="setActiveTab('salary')">月薪設定</div>`);
+  for (const n of names) {
+    const sel = state.activeTab === n ? 'active' : '';
+    tabsHtml.push(`<div class="tbl-tab ${sel}" onclick="setActiveTab('${esc(n)}')">${esc(n)}</div>`);
+  }
+  document.getElementById('tableTabs').innerHTML = tabsHtml.join('');
+}
+
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  render();
+}
+
+// 取得編輯後的值(若有 override 則返回該值,否則返回預設值)
+function getOverride(empName, field, defaultVal) {
+  const key = `${empName}|${field}`;
+  return state.overrides[key] !== undefined ? state.overrides[key] : defaultVal;
+}
+// 設定 override 並重繪
+function setOverride(empName, field, value) {
+  const key = `${empName}|${field}`;
+  // 如果等於計算預設值,視為清除
+  state.overrides[key] = value;
+  render();
+}
+
+function renderSummaryTable(names) {
+  const { totalDays: monthTotalDays, weekdays: monthWeekdays } = getMonthInfo();
+  const weekendDays = monthTotalDays - monthWeekdays;
+
+  // 21 欄表頭(對應匯出 Excel 的薪資總表)
+  const cols = [
+    { k: 'name', label: '員工姓名', w: 100 },
+    { k: 'workType', label: '工時類型', w: 120 },
+    { k: 'punchedDays', label: '出勤天數', w: 70, num: true },
+    { k: 'expectedWorkDays', label: '應出勤', w: 60, num: true },
+    { k: 'missedDays', label: '漏打卡天數', w: 80, num: true, edit: true },
+    { k: 'leave_事假', label: '事假時數', w: 70, num: true, edit: true },
+    { k: 'leave_普通傷病假', label: '普通傷病假時數', w: 100, num: true, edit: true },
+    { k: 'leave_特休假', label: '特休假時數', w: 80, num: true, edit: true },
+    { k: 'leave_生理假', label: '生理假時數', w: 80, num: true, edit: true },
+    { k: 'leave_公假', label: '公假時數', w: 70, num: true, edit: true },
+    { k: 'leave_婚假', label: '婚假時數', w: 70, num: true, edit: true },
+    { k: 'leave_喪假', label: '喪假時數', w: 70, num: true, edit: true },
+    { k: 'otHours', label: '加班時數', w: 70, num: true, edit: true },
+    { k: 'otCompHours', label: '加班補休時數', w: 90, num: true, edit: true },
+    { k: 'auditHours', label: '稽核時數', w: 70, num: true, edit: true },
+    { k: 'monthly', label: '月薪', w: 80, num: true, edit: true },
+    { k: 'missedDeduct', label: '漏打卡扣款', w: 90, num: true, neg: true, edit: true },
+    { k: 'personalDeduct', label: '事假扣款', w: 80, num: true, neg: true, edit: true },
+    { k: 'sickDeduct', label: '傷病假扣款', w: 90, num: true, neg: true, edit: true },
+    { k: 'auditDeduct', label: '稽核扣款', w: 80, num: true, neg: true, edit: true },
+    { k: 'finalSalary', label: '實發薪資', w: 90, num: true },
+  ];
+
+  const headRow = cols.map(c =>
+    `<th style="min-width:${c.w}px">${c.label}</th>`
+  ).join('');
+
+  const bodyRows = names.map(n => {
+    const emp = state.employees[n];
+    const s = calcSalary(n);
+    const hasAudit = (s.auditDeduct || 0) > 0;
+    const rowClass = hasAudit ? 'audit-row' : '';
+
+    const tds = cols.map(c => {
+      let val = '';
+      let extraClass = c.num ? 'num' : '';
+      if (c.neg) extraClass += ' neg';
+
+      if (c.k === 'name') {
+        return `<td class="link" onclick="setActiveTab('${esc(n)}')">${esc(n)}</td>`;
+      } else if (c.k === 'workType') {
+        val = emp.workType || '—';
+      } else if (c.k === 'punchedDays') val = emp.stats.punchedDays;
+      else if (c.k === 'expectedWorkDays') val = s.expectedWorkDays;
+      else if (c.k === 'missedDays') val = getOverride(n, 'missedDays', s.missedDays);
+      else if (c.k.startsWith('leave_')) {
+        const t = c.k.substring(6);
+        val = getOverride(n, c.k, emp.stats.leaveHours[t] || 0);
+      } else if (c.k === 'otHours') val = getOverride(n, 'otHours', s.otHours);
+      else if (c.k === 'otCompHours') val = getOverride(n, 'otCompHours', s.otCompHours);
+      else if (c.k === 'auditHours') val = getOverride(n, 'auditHours', s.auditHours);
+      else if (c.k === 'monthly') val = getOverride(n, 'monthly', s.monthly);
+      else if (c.k === 'missedDeduct') val = getOverride(n, 'missedDeduct', s.missedDeduct);
+      else if (c.k === 'personalDeduct') val = getOverride(n, 'personalDeduct', s.personalDeduct);
+      else if (c.k === 'sickDeduct') val = getOverride(n, 'sickDeduct', s.sickDeduct);
+      else if (c.k === 'auditDeduct') val = getOverride(n, 'auditDeduct', s.auditDeduct);
+      else if (c.k === 'finalSalary') {
+        // 動態重算:實發 = 月薪 − 所有扣款
+        const monthly = Number(getOverride(n, 'monthly', s.monthly)) || 0;
+        const d1 = Number(getOverride(n, 'missedDeduct', s.missedDeduct)) || 0;
+        const d2 = Number(getOverride(n, 'personalDeduct', s.personalDeduct)) || 0;
+        const d3 = Number(getOverride(n, 'sickDeduct', s.sickDeduct)) || 0;
+        const d4 = Number(getOverride(n, 'auditDeduct', s.auditDeduct)) || 0;
+        val = monthly - d1 - d2 - d3 - d4;
+      }
+
+      // 顯示值處理(0 留空、金額顯示 - 前綴)
+      let displayVal = val;
+      if (c.num && (val === 0 || val === '' || val === null || val === undefined)) {
+        displayVal = '0';
+      } else if (c.num && c.neg && Number(val) > 0) {
+        displayVal = '-' + Number(val).toLocaleString();
+      } else if (c.num && Number(val) === Number(val)) {
+        displayVal = Number(val).toLocaleString();
+      } else {
+        displayVal = esc(String(val));
+      }
+
+      if (c.edit) {
+        return `<td class="${extraClass} editable" contenteditable="true"
+          data-emp="${esc(n)}" data-field="${c.k}" data-neg="${c.neg ? '1' : '0'}"
+          onblur="onCellEdit(this)"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+          >${displayVal}</td>`;
+      } else {
+        return `<td class="${extraClass}">${displayVal}</td>`;
+      }
+    });
+
+    return `<tr class="${rowClass}">${tds.join('')}</tr>`;
+  }).join('');
+
+  return `
+    <div class="tbl-title">薪資統計總表 · ${esc(state.period)}</div>
+    <div class="tbl-summary-meta">本月總天數:${monthTotalDays}  |  非六日天數(平日):${monthWeekdays}  |  六日天數:${weekendDays}  |  員工總數:${names.length}  |  提示:可編輯欄位直接點擊輸入(不影響個人 sheet 計算)</div>
+    <table class="xls-table">
+      <thead><tr>${headRow}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+}
+
+// 儲存格失焦事件:讀取新值、驗證、存到 overrides
+function onCellEdit(el) {
+  const emp = el.getAttribute('data-emp');
+  const field = el.getAttribute('data-field');
+  const isNeg = el.getAttribute('data-neg') === '1';
+  let text = (el.textContent || '').trim().replace(/,/g, '').replace(/^-/, '');
+  let num = Number(text);
+  if (isNaN(num)) num = 0;
+  if (isNeg) {
+    // 金額欄存正數(顯示時加 -)
+  }
+  setOverride(emp, field, num);
+}
+
+function renderSalarySettingsTable(names) {
+  const hasImported = (state.salaryImportOrder || []).length > 0;
+  const rows = names.map(n => {
+    const emp = state.employees[n];
+    const monthly = emp.salary ?? state.defaultSalary;
+    const workDays = emp.workDays ?? state.defaultWorkDays;
+    const email = emp.email || '';
+    const isDefaultSalary = emp.salary === undefined;
+    const isDefaultDays = emp.workDays === undefined;
+    return `
+      <tr>
+        <td>${esc(n)}</td>
+        <td class="num editable" contenteditable="true" data-emp="${esc(n)}" data-field="settings_monthly"
+            onblur="onSettingsEdit(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            style="${isDefaultSalary ? 'color:#999;font-style:italic' : ''}">${monthly.toLocaleString()}</td>
+        <td class="num editable" contenteditable="true" data-emp="${esc(n)}" data-field="settings_workDays"
+            onblur="onSettingsEdit(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            style="${isDefaultDays ? 'color:#999;font-style:italic' : ''}">${workDays}</td>
+        <td class="editable" contenteditable="true" data-emp="${esc(n)}" data-field="settings_email"
+            onblur="onSettingsEdit(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            style="${!email ? 'color:#ccc' : ''}">${email ? esc(email) : '—'}</td>
+        <td>${email ? `<a href="#" onclick="notifyEmployee('${esc(n)}');return false;" style="color:#1E5FBF;text-decoration:underline">✉ 寄送通知</a>` : '—'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="tbl-title">月薪設定 · ${esc(state.period)}</div>
+    <div class="tbl-summary-meta">${hasImported ? `已匯入 ${state.salaryImportOrder.length} 位,其餘員工使用預設` : `全部使用預設(月薪 ${state.defaultSalary.toLocaleString()} / 應出勤 ${state.defaultWorkDays} 天)`}</div>
+    <table class="xls-table">
+      <thead>
+        <tr>
+          <th style="min-width:100px">員工姓名</th>
+          <th style="min-width:100px">月薪(TWD)</th>
+          <th style="min-width:100px">應出勤天數</th>
+          <th style="min-width:200px">Email</th>
+          <th style="min-width:120px">通知</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function onSettingsEdit(el) {
+  const emp = el.getAttribute('data-emp');
+  const field = el.getAttribute('data-field');
+  let text = (el.textContent || '').trim();
+  if (field === 'settings_monthly') {
+    const num = Number(text.replace(/,/g, ''));
+    if (!isNaN(num) && num > 0) state.employees[emp].salary = num;
+  } else if (field === 'settings_workDays') {
+    const num = Number(text);
+    if (!isNaN(num) && num > 0) state.employees[emp].workDays = num;
+  } else if (field === 'settings_email') {
+    if (text === '—' || text === '') state.employees[emp].email = '';
+    else state.employees[emp].email = text;
+  }
+  render();
+}
+
+function renderEmployeeSheetTable(name) {
+  const emp = state.employees[name];
+  if (!emp) return '<div class="tbl-title">員工不存在</div>';
+  const sal = calcSalary(name);
+  const rule = emp.stats.rule;
+  const weekdayZh = ['日','一','二','三','四','五','六'];
+
+  // 建立每日資料
+  const allDates = new Set();
+  for (const r of emp.records) if (r.date) allDates.add(r.date);
+  const sortedDates = [...allDates].sort();
+  const recordMap = {};
+  for (const r of emp.records) if (r.date) recordMap[r.date] = r;
+
+  const isSalesRole = (emp.workType || '').includes('業務');
+  const isYangMei = (emp.workType || '').includes('楊梅-週一至週五')
+                 || (emp.workType || '').includes('楊梅-排休');
+
+  const hourlyWage = sal.hourlyWage;
+  let sumLeaveHr = 0, sumDeduct = 0, sumAuditHr = 0, sumAuditDed = 0;
+
+  const rows = sortedDates.map(dateStr => {
+    const r = recordMap[dateStr];
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const wLabel = weekdayZh[dow];
+    const isWeekend = (dow === 0 || dow === 6);
+
+    const inT = (r && r.punchIn) ? r.punchIn : '—';
+    const outT = (r && r.punchOut) ? r.punchOut : '—';
+    let noteText = '';
+    let leaveHrNum = 0, deductNum = 0;
+    if (r && r.note && r.note.trim()) {
+      noteText = r.note.trim();
+      const parsed = calcDayLeaveFromNote(r, rule);
+      if (parsed.type && !['加班', '加班補休'].includes(parsed.type) && parsed.hours > 0) {
+        leaveHrNum = parsed.hours;
+        if (parsed.type === '事假') deductNum = Math.round(parsed.hours * hourlyWage);
+        else if (parsed.type === '普通傷病假' || parsed.type === '生理假') deductNum = Math.round(parsed.hours * hourlyWage * 0.5);
+      }
+    }
+
+    // 稽核
+    let auditHrNum = 0, auditDedNum = 0;
+    const hasIn = !!(r && r.punchIn);
+    const hasOut = !!(r && r.punchOut);
+    if (hasIn && hasOut) {
+      const [ih, im] = r.punchIn.split(':').map(Number);
+      const [oh, om] = r.punchOut.split(':').map(Number);
+      const rawIn = ih + im / 60, rawOut = oh + om / 60;
+      let workHours = Math.max(0, rawOut - rawIn);
+      if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+      const segments = parseAllLeavesFromNote(r, rule);
+      const paidCover = segments.filter(s => s.type !== '加班').reduce((sum, s) => sum + s.hours, 0);
+      workHours += paidCover;
+      let shortfall = 0;
+      if (isYangMei && isWeekend) {
+        if (workHours <= 5) shortfall = Math.max(0, 8 - workHours);
+      } else if (workHours > 7) {
+        shortfall = 0;
+      } else if (isSalesRole && workHours <= 6) {
+        // 業務且工時 ≤ 6hr → 8 − 工時(workHours 已含 paidCover)
+        shortfall = Math.max(0, 8 - workHours);
+      } else {
+        const stdIn = rule.startH + rule.startM / 60, stdOut = rule.endH + rule.endM / 60;
+        const outTarget = (isSalesRole && workHours > 6) ? (stdOut - 1) : stdOut;
+        const late = Math.max(0, rawIn - (stdIn + 0.25));
+        const earlyOut = Math.max(0, outTarget - rawOut);
+        shortfall = Math.max(0, late + earlyOut - paidCover);
+      }
+      shortfall = Math.min(shortfall, 8);
+      shortfall = Math.round(shortfall * 2) / 2;
+      if (shortfall >= 0.5) { auditHrNum = shortfall; auditDedNum = Math.round(shortfall * hourlyWage); }
+    }
+
+    sumLeaveHr += leaveHrNum; sumDeduct += deductNum;
+    sumAuditHr += auditHrNum; sumAuditDed += auditDedNum;
+
+    const trBg = isWeekend ? 'background:#f5f5f0' : '';
+    const rowStyle = auditHrNum > 0 ? 'background:#d6eaf8' : trBg;
+    const inClr = (hasIn !== hasOut) ? 'color:#d43f3a;font-weight:700' : (!hasIn ? 'color:#ccc' : '');
+    const outClr = (hasIn !== hasOut) ? 'color:#d43f3a;font-weight:700' : (!hasOut ? 'color:#ccc' : '');
+    return `
+      <tr style="${rowStyle}">
+        <td>${dateStr}</td>
+        <td style="text-align:center">${wLabel}</td>
+        <td style="text-align:center;${inClr}">${inT}</td>
+        <td style="text-align:center;${outClr}">${outT}</td>
+        <td>${esc(noteText)}</td>
+        <td class="num">${leaveHrNum > 0 ? leaveHrNum : ''}</td>
+        <td class="num neg">${deductNum > 0 ? '-' + deductNum.toLocaleString() : ''}</td>
+        <td class="num">${auditHrNum > 0 ? auditHrNum : ''}</td>
+        <td class="num neg">${auditDedNum > 0 ? '-' + auditDedNum.toLocaleString() : ''}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="tbl-title">${esc(emp.name)} · ${esc(emp.workType || '—')} · ${String(rule.startH).padStart(2,'0')}:${String(rule.startM).padStart(2,'0')}–${String(rule.endH).padStart(2,'0')}:${String(rule.endM).padStart(2,'0')} · ${rule.isShift ? '排休制' : '週休制'}</div>
+    <div class="tbl-summary-meta">期間:${esc(state.period)}  |  月薪:${sal.monthly.toLocaleString()}  |  時薪:${sal.hourlyWage}  |  <span style="background:#fff200;padding:2px 6px">實發薪資:${sal.finalSalary.toLocaleString()}</span></div>
+    <div class="tbl-summary-meta">出勤:${emp.stats.punchedDays}  |  應出勤:${sal.expectedWorkDays}天  |  漏打卡:${sal.missedDays}天${sal.missedDeduct ? `(-${sal.missedDeduct.toLocaleString()})` : ''}  |  事假:-${sal.personalDeduct.toLocaleString()}  |  傷病假:-${sal.sickDeduct.toLocaleString()}  |  加班:${sal.otHours}  |  加班補休:${sal.otCompHours}</div>
+    <table class="xls-table">
+      <thead>
+        <tr>
+          <th style="min-width:100px">日期</th>
+          <th style="min-width:40px">星期</th>
+          <th style="min-width:70px">上班時間</th>
+          <th style="min-width:70px">下班時間</th>
+          <th style="min-width:320px">備註</th>
+          <th style="min-width:70px">請假時數</th>
+          <th style="min-width:80px">扣薪</th>
+          <th style="min-width:60px">稽核</th>
+          <th style="min-width:80px">稽核扣薪</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+        <tr style="background:#fff9ee;font-weight:700">
+          <td colspan="5" style="text-align:right">合計</td>
+          <td class="num">${sumLeaveHr > 0 ? Math.round(sumLeaveHr * 100) / 100 : ''}</td>
+          <td class="num neg">${sumDeduct > 0 ? '-' + sumDeduct.toLocaleString() : ''}</td>
+          <td class="num">${sumAuditHr > 0 ? Math.round(sumAuditHr * 100) / 100 : ''}</td>
+          <td class="num neg">${sumAuditDed > 0 ? '-' + sumAuditDed.toLocaleString() : ''}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
 }
 
 function renderOverview(empList) {
@@ -2148,6 +3245,15 @@ function renderDetail(name) {
             <span style="color:#c9a961;margin-left:8px">· ${String(emp.stats.rule.startH).padStart(2,'0')}:${String(emp.stats.rule.startM).padStart(2,'0')}–${String(emp.stats.rule.endH).padStart(2,'0')}:${String(emp.stats.rule.endM).padStart(2,'0')}</span>
             <span style="color:#888;margin-left:6px">· ${emp.stats.rule.isShift ? '排休制' : '週休制'}</span>
           </div>
+          ${emp.email ? `
+          <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
+            <span style="font-size:11px;color:#888;font-family:'Noto Sans TC',sans-serif">Email</span>
+            <span style="font-size:12px;color:#1a1a1a">${esc(emp.email)}</span>
+            <button class="btn btn-outline" onclick="notifyEmployee('${esc(emp.name)}')" style="padding:4px 10px;font-size:11px">✉ 通知此員工</button>
+          </div>
+          ` : `
+          <div style="margin-top:8px;font-size:11px;color:#bbb">(Email 未設定 — 匯入月薪時可一併匯入)</div>
+          `}
         </div>
         <div style="text-align:right">
           <div style="font-family:'Noto Sans TC',sans-serif;font-size:10px;letter-spacing:2px;color:#888;text-transform:uppercase">實發薪資</div>
