@@ -2,10 +2,16 @@
 <!--
   ============================================================
   員工考勤薪資系統
-  Version: V31
+  Version: V32
   Build Date: 2026-04-19
   ============================================================
   版本歷史:
+  V32 (2026-04-19)  生理假改為半扣(與普通傷病假相同)
+    - 生理假時數改為時薪 × 時數 × 0.5 扣薪
+    - sheet 逐日的「扣薪」欄、總表「傷病假扣款」欄,皆合併計算生理假
+    - 生理假時數欄位獨立顯示不變(總表第 9 欄「生理假時數」)
+    - 例:員工有普傷 13hr + 生理假 6hr → 傷病假扣款 = (13+6) × 時薪 × 0.5
+
   V31 (2026-04-19)  跨月請假時數修正:只計本月
     - 修正 BUG:跨月的請假備註(例:[事假] 3/31~4/1)導致總表與 sheet 不一致
     - 之前:parseHours 把 3/31 的 8hr 也算進 4 月 leaveHours,總表顯示 17hr
@@ -256,8 +262,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>員工考勤薪資系統 V31</title>
-<meta name="version" content="V31">
+<title>員工考勤薪資系統 V32</title>
+<meta name="version" content="V32">
 <meta name="build-date" content="2026-04-19">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -555,7 +561,7 @@
 
 <header>
   <div class="title-group">
-    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V31</span></div>
+    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V32</span></div>
     <h1 class="serif">員工考勤薪資系統</h1>
   </div>
   <div class="actions" id="headerActions">
@@ -612,7 +618,7 @@
 
 <script>
 // =============== 版本資訊 ===============
-const APP_VERSION = 'V31';
+const APP_VERSION = 'V32';
 const APP_BUILD_DATE = '2026-04-19';
 
 // =============== State ===============
@@ -1022,10 +1028,12 @@ function calcSalary(name) {
 
   const personalHrs = emp.stats.leaveHours['事假'] || 0;
   const sickHrs = emp.stats.leaveHours['普通傷病假'] || 0;
+  const mensHrs = emp.stats.leaveHours['生理假'] || 0;
 
   // 扣薪統一用時薪 × 時數
-  const personalDeduct = Math.round(personalHrs * hourlyWage);       // 事假全扣
-  const sickDeduct = Math.round(sickHrs * hourlyWage * 0.5);         // 普傷半扣
+  const personalDeduct = Math.round(personalHrs * hourlyWage);                    // 事假全扣
+  // 普通傷病假、生理假皆半扣(時薪 × 時數 × 0.5)
+  const sickDeduct = Math.round((sickHrs + mensHrs) * hourlyWage * 0.5);
 
   // 漏打卡計算:
   // - 排休制(含「排休」):應出勤 = 本月總天數 − 8
@@ -1623,7 +1631,7 @@ async function exportReport() {
           }
           if (parsed.type === '事假' && parsed.hours > 0) {
             deductNum = Math.round(parsed.hours * hourlyWage);
-          } else if (parsed.type === '普通傷病假' && parsed.hours > 0) {
+          } else if ((parsed.type === '普通傷病假' || parsed.type === '生理假') && parsed.hours > 0) {
             deductNum = Math.round(parsed.hours * hourlyWage * 0.5);
           }
         } else if (r.note) {
