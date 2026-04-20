@@ -2,10 +2,30 @@
 <!--
   ============================================================
   員工考勤薪資系統
-  Version: V56
+  Version: V57
   Build Date: 2026-04-20
   ============================================================
   版本歷史:
+  V57 (2026-04-20)  請假時數改為依工時類型扣午休 + 補齊工時類型
+    - 工時類型擴充:
+      * 補上「楊梅-排休(舊)」與「門市-週一至週五」
+      * 每個類型新增午休時段屬性(lunchStart / lunchEnd):
+        - 預設 / 楊梅類:12:30 ~ 13:30
+        - 門市-排休 / 門市-週一至週五:13:00 ~ 14:00
+        - 門市業務:14:30 ~ 15:30
+    - 請假/加班補休時數計算規則變更(V48 的規則反轉):
+      * 之前:不扣午休 (V48-V56)
+      * 現在:若時段跨越該工時類型的用餐時段 → 扣 1hr(V57)
+      * 上限 8hr
+    - 實際工時扣午休邏輯改用 rule.lunchStart / lunchEnd(不再寫死 12.5/13.5)
+    - 4 處時數計算統一:calcLeaveHoursRange、calcSingleDayHours、
+      calcSalary 稽核、員工 sheet 稽核、email 稽核、表格模式員工 sheet 稽核
+    - 影響案例(邱育瑩門市業務):
+      * 3/23 [事假] 10:30~18:30(午休 14:30~15:30,跨)
+        V56:8hr 扣 1,000 → V57:7hr 扣 875
+      * 3/10 [加班補休] 10:30~18:30(跨午休)
+        V56:8hr → V57:7hr(總加班補休從 16 變 15)
+
   V56 (2026-04-20)  匯出 Excel 所有 sheet 凍結首欄
     - 薪資總表:凍結 xSplit=1 + ySplit=3(首欄員工姓名 + 首 3 列)
     - 月薪設定 sheet:凍結 xSplit=1 + ySplit=3(首欄員工姓名 + 首 3 列)
@@ -549,8 +569,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>員工考勤薪資系統 V56</title>
-<meta name="version" content="V56">
+<title>員工考勤薪資系統 V57</title>
+<meta name="version" content="V57">
 <meta name="build-date" content="2026-04-19">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1021,7 +1041,7 @@
 
 <header>
   <div class="title-group">
-    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V56</span></div>
+    <div class="eyebrow">Payroll System · <span style="color:#c9a961">V57</span></div>
     <h1 class="serif">員工考勤薪資系統</h1>
   </div>
   <div class="actions" id="headerActions">
@@ -1084,7 +1104,7 @@
 
 <script>
 // =============== 版本資訊 ===============
-const APP_VERSION = 'V56';
+const APP_VERSION = 'V57';
 const APP_BUILD_DATE = '2026-04-19';
 
 // =============== State ===============
@@ -1333,15 +1353,20 @@ function calcStats(records, workTypeName) {
 // =============== 工時類型規則 ===============
 // 依工時類型推斷上班時段與排休規則
 // isShift = true 代表排休制(月休8天,休息日看打卡記錄),false 代表週休制(週六日休)
+// 各工時類型的標準時段(含午休 / 用餐時段)
+// lunchStart / lunchEnd 用 decimal hour 表示(例如 12.5 = 12:30)
+// 所有類型「一天上班時數」都是 8hr,工作時段 = (第一時段) + (第二時段) = 4 + 4
 const WORK_TYPES = {
-  '預設':           { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: false },
-  '楊梅-週一至週五': { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: false },
-  '楊梅-排休(新)':  { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: true  },
-  '門市-排休':      { startH: 9,  startM: 0,  endH: 18, endM: 0,  isShift: true  },
-  '門市業務':       { startH: 10, startM: 30, endH: 19, endM: 30, isShift: true  },
+  '預設':             { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: false, lunchStart: 12.5, lunchEnd: 13.5 },
+  '楊梅-週一至週五':   { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: false, lunchStart: 12.5, lunchEnd: 13.5 },
+  '楊梅-排休(新)':    { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: true,  lunchStart: 12.5, lunchEnd: 13.5 },
+  '楊梅-排休(舊)':    { startH: 8,  startM: 30, endH: 17, endM: 30, isShift: true,  lunchStart: 12.5, lunchEnd: 13.5 },
+  '門市-排休':         { startH: 9,  startM: 0,  endH: 18, endM: 0,  isShift: true,  lunchStart: 13.0, lunchEnd: 14.0 },
+  '門市-週一至週五':   { startH: 9,  startM: 0,  endH: 18, endM: 0,  isShift: false, lunchStart: 13.0, lunchEnd: 14.0 },
+  '門市業務':          { startH: 10, startM: 30, endH: 19, endM: 30, isShift: true,  lunchStart: 14.5, lunchEnd: 15.5 },
 };
 // 預設 fallback(遇到未登錄的工時類型)
-const DEFAULT_WORK_TYPE = { startH: 8, startM: 30, endH: 17, endM: 30, isShift: false };
+const DEFAULT_WORK_TYPE = { startH: 8, startM: 30, endH: 17, endM: 30, isShift: false, lunchStart: 12.5, lunchEnd: 13.5 };
 
 function getWorkTypeRule(workTypeName) {
   return WORK_TYPES[workTypeName] || DEFAULT_WORK_TYPE;
@@ -1408,7 +1433,7 @@ function parseHours(text, rule, punchedDates, monthRange) {
   // 單日:直接算時間差(請假/加班補休時段不扣午休,與 calcDayLeaveFromNote 一致)
   if (aDateStr === bDateStr) {
     if (monthRange && (aDateStr < monthRange.minDate || aDateStr > monthRange.maxDate)) return 0;
-    return calcLeaveHoursRange(a.h, a.m, b.h, b.m);
+    return calcLeaveHoursRange(a.h, a.m, b.h, b.m, rule);
   }
 
   // 跨日:逐日累加工作日
@@ -1425,11 +1450,11 @@ function parseHours(text, rule, punchedDates, monthRange) {
       const isFirst = cursor.getTime() === startDate.getTime();
       const isLast = cursor.getTime() === endDate.getTime();
       if (isFirst) {
-        total += calcLeaveHoursRange(a.h, a.m, rule.endH, rule.endM);
+        total += calcLeaveHoursRange(a.h, a.m, rule.endH, rule.endM, rule);
       } else if (isLast) {
-        total += calcLeaveHoursRange(rule.startH, rule.startM, b.h, b.m);
+        total += calcLeaveHoursRange(rule.startH, rule.startM, b.h, b.m, rule);
       } else {
-        total += calcLeaveHoursRange(rule.startH, rule.startM, rule.endH, rule.endM);
+        total += calcLeaveHoursRange(rule.startH, rule.startM, rule.endH, rule.endM, rule);
       }
     }
     cursor.setDate(cursor.getDate() + 1);
@@ -1438,27 +1463,36 @@ function parseHours(text, rule, punchedDates, monthRange) {
 }
 
 // 單日內某時段的工時 — 用於「實際打卡時段」
-// - 若時段跨越午休(12:30~13:30)且總長 >= 5 小時 → 扣 1 小時午休
+// - 若時段跨越該工時類型的午休時段,且總長 >= 5 小時 → 扣 1 小時午休
 // - 每日上限 8 小時
-function calcSingleDayHours(h1, m1, h2, m2) {
+// - rule 提供 lunchStart / lunchEnd(decimal hours),若不提供則用預設 12.5/13.5
+function calcSingleDayHours(h1, m1, h2, m2, rule) {
   const start = h1 + m1 / 60;
   const end = h2 + m2 / 60;
   if (end <= start) return 0;
   let diff = end - start;
-  if (start <= 12.5 && end >= 13.5 && diff >= 5) diff -= 1;
+  const lunchStart = (rule && rule.lunchStart !== undefined) ? rule.lunchStart : 12.5;
+  const lunchEnd = (rule && rule.lunchEnd !== undefined) ? rule.lunchEnd : 13.5;
+  if (start <= lunchStart && end >= lunchEnd && diff >= 5) diff -= 1;
   if (diff > 8) diff = 8;
   return Math.round(diff * 100) / 100;
 }
 
-// 請假/加班補休的時數計算 — 單純的時間差
-// - 不扣午休(員工請假時間已是指定範圍,不應再扣)
-// - 上限 8 小時
-function calcLeaveHoursRange(h1, m1, h2, m2) {
+// 請假/加班補休的時數計算
+// - 若時段跨越該工時類型的用餐時段 → 扣 1 小時午休(V57 規則變更)
+// - 上限 8 小時(整天請假封頂)
+// - rule 提供 lunchStart / lunchEnd(decimal hours),若不提供則用預設 12.5/13.5
+function calcLeaveHoursRange(h1, m1, h2, m2, rule) {
   const start = h1 + m1 / 60;
   const end = h2 + m2 / 60;
   if (end <= start) return 0;
   let diff = end - start;
+  const lunchStart = (rule && rule.lunchStart !== undefined) ? rule.lunchStart : 12.5;
+  const lunchEnd = (rule && rule.lunchEnd !== undefined) ? rule.lunchEnd : 13.5;
+  // V57:請假時段若涵蓋用餐時段 → 扣 1hr(與實際工時邏輯一致)
+  if (start <= lunchStart && end >= lunchEnd) diff -= 1;
   if (diff > 8) diff = 8;
+  if (diff < 0) diff = 0;
   return Math.round(diff * 100) / 100;
 }
 
@@ -1574,7 +1608,7 @@ function calcSalary(name) {
 
       // 實際工時(扣午休 if 跨)
       let workHours = Math.max(0, rawOut - rawIn);
-      if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+      if (rawIn <= (rule.lunchStart ?? 12.5) && rawOut >= (rule.lunchEnd ?? 13.5) && workHours >= 5) workHours -= 1;
       workHours += paidCover;
 
       if (isYangMeiWeekend) {
@@ -1754,7 +1788,7 @@ function buildEmailBody(name) {
       const rawIn = ih + im / 60;
       const rawOut = oh + om / 60;
       let workHours = Math.max(0, rawOut - rawIn);
-      if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+      if (rawIn <= (rule.lunchStart ?? 12.5) && rawOut >= (rule.lunchEnd ?? 13.5) && workHours >= 5) workHours -= 1;
       const segments = parseAllLeavesFromNote(r, rule);
       const paidCover = segments.filter(s => s.type !== '加班').reduce((sum, s) => sum + s.hours, 0);
       workHours += paidCover;
@@ -2008,18 +2042,18 @@ function calcDayLeaveFromNote(record, rule) {
   let hours = 0;
   if (aDateStr === bDateStr) {
     // 單日:僅在該日期匹配時才計算。請假時數不扣午休、上限 8hr
-    if (dateStr === aDateStr) hours = calcLeaveHoursRange(a.h, a.m, b.h, b.m);
+    if (dateStr === aDateStr) hours = calcLeaveHoursRange(a.h, a.m, b.h, b.m, rule);
   } else {
     // 跨日:依該筆記錄的日期決定要算的時段
     if (dateStr === aDateStr) {
       // 起始日
-      hours = calcLeaveHoursRange(a.h, a.m, rule.endH, rule.endM);
+      hours = calcLeaveHoursRange(a.h, a.m, rule.endH, rule.endM, rule);
     } else if (dateStr === bDateStr) {
       // 結束日
-      hours = calcLeaveHoursRange(rule.startH, rule.startM, b.h, b.m);
+      hours = calcLeaveHoursRange(rule.startH, rule.startM, b.h, b.m, rule);
     } else if (dateStr > aDateStr && dateStr < bDateStr) {
       // 中間整天:用工時類型標準時段
-      hours = calcLeaveHoursRange(rule.startH, rule.startM, rule.endH, rule.endM);
+      hours = calcLeaveHoursRange(rule.startH, rule.startM, rule.endH, rule.endM, rule);
     }
   }
   return { type, hours, desc: rest.trim() };
@@ -2064,7 +2098,7 @@ function calcDayActualHours(record, rule) {
   if (record.punchIn && record.punchOut) {
     const [h1, m1] = record.punchIn.split(':').map(Number);
     const [h2, m2] = record.punchOut.split(':').map(Number);
-    hours += calcSingleDayHours(h1, m1, h2, m2);
+    hours += calcSingleDayHours(h1, m1, h2, m2, rule);
   }
 
   // 2. 解析所有請假 / 加班補休段落
@@ -2695,7 +2729,7 @@ async function exportReport() {
 
           // 實際工時(扣午休 if 跨)
           let workHours = Math.max(0, rawOut - rawIn);
-          if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+          if (rawIn <= (rule.lunchStart ?? 12.5) && rawOut >= (rule.lunchEnd ?? 13.5) && workHours >= 5) workHours -= 1;
           workHours += paidCover;
 
           let rawShortfall = 0;
@@ -3300,7 +3334,7 @@ function renderEmployeeSheetTable(name) {
       const [oh, om] = r.punchOut.split(':').map(Number);
       const rawIn = ih + im / 60, rawOut = oh + om / 60;
       let workHours = Math.max(0, rawOut - rawIn);
-      if (rawIn <= 12.5 && rawOut >= 13.5 && workHours >= 5) workHours -= 1;
+      if (rawIn <= (rule.lunchStart ?? 12.5) && rawOut >= (rule.lunchEnd ?? 13.5) && workHours >= 5) workHours -= 1;
       const segments = parseAllLeavesFromNote(r, rule);
       const paidCover = segments.filter(s => s.type !== '加班').reduce((sum, s) => sum + s.hours, 0);
       workHours += paidCover;
